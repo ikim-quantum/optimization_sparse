@@ -1,9 +1,96 @@
 from pyquil.quil import Program
 from pyquil.api import get_qc
+import numpy as np
+import scipy.linalg as la
+from scipy import sparse
+import matplotlib.pyplot as plt
+import scipy.fftpack as spfft
+import cvxpy as cvx
 
 def setup_forest_objects():
     qc = get_qc("9q-generic-qvm")
     return qc
+
+# Cosine transform
+# I have no idea what the hell is going on here.
+def reconstruct_sparse_cosine(m_vecs,y_vals,verb=False):
+    itt=100
+    idct_matrix = spfft.idct(np.identity(itt), norm='ortho', axis=0)
+    m_vecs = idct_matrix[rand_idx] #-> Needs to be fixed!!!!!!!!!
+    vx = cvx.Variable(itt)
+    objective = cvx.Minimize(cvx.norm(vx,1))
+    constraints = [m_vecs*vx == y_vals]
+    prob = cvx.Problem(objective, constraints)
+    result = prob.solve(verbose=verb)
+    return np.squeeze(np.array(vx.value))
+
+def min_spacing(mylist):
+    min_space = max(mylist) - min(mylist)
+    for item in mylist:
+        spaces = [abs(item-item2) for item2 in mylist if item!=item2]
+        min_space = min(min_space,min(spaces))
+
+    return min_space
+
+# reconstruction: my version
+def reconstruct_from_signal(angles, signals, verb=False):
+    spacing = min_spacing(angles)
+    itt = int(2*np.pi / spacing)
+    # itt is the number of distinct angles.
+    idct_matrix = spfft.idct(np.identity(itt), norm='ortho', axis=0)
+    angles_discrete = [int(angle / spacing) for angle in angles]
+    m_vecs = idct_matrix[angles_discrete]
+    vx = cvx.Variable(itt)
+    objective = cvx.Minimize(cvx.norm(vx,1))
+    constraints = [m_vecs*vx == signals]
+    prob = cvx.Problem(objective, constraints)
+    result = prob.solve(verbose=verb)
+    return idct_matrix @ np.squeeze(np.array(vx.value))
+    
+# Outputs random sample of angles for qaoa.
+# Only one angle is changed(which)
+def qaoa_maxcut_randsample(edges, angles, shots, which, sample_size=100, sample_size_reduced=60):
+    rand_angles = np.array([2*np.pi*i/sample_size for i in range(sample_size)])
+    np.random.shuffle(rand_angles)
+
+    angles_sampled = rand_angles[:sample_size_reduced]
+    qaoa_sampled = []
+    for angle in angles_sampled:
+        angles[which] = angle
+        qaoa_sampled.append(qaoa_maxcut(edges, angles, shots))
+
+    return angles_sampled, qaoa_sampled
+
+# Outputs uniform sample of angles for qaoa.
+# Only one angle is changed(which)
+def qaoa_maxcut_uniformsample(edges, angles, shots, which, sample_size=60):
+    rot_angles = np.array([2*np.pi*i/sample_size for i in range(sample_size)])
+    qaoa_sampled = []
+    for angle in rot_angles:
+        angles[which] = angle
+        qaoa_sampled.append(qaoa_maxcut(edges, angles, shots))
+
+    return rot_angles, qaoa_sampled
+
+
+# qaoa reconstruction
+def qaoa_maxcut_opt(edges, angles, shots=1000, sweeps=5):
+    for i in range(sweeps):
+        for j in range(len(angles)):
+            # Get random samples
+            randangles, randsignals = qaoa_maxcut_randsample(edges, angles, shots=shots, which=j, sample_size=1000,sample_size_reduced=30)
+            # Retrieve the sparse Fourier coefficients
+            sparse_signal = reconstruct_from_signal(randangles, randsignals, verb=False)
+            # Find the index that minimizes sparse_signal.
+            idx = np.argmax(sparse_signal)
+            # Find the actual value of the angle corresponding to idx.
+            angle_opt = idx * 2 * np.pi / len(sparse_signal)
+            # Stick in the optimal angle.
+            angles[j] = angle_opt
+            current_value = qaoa_maxcut(edges, angles, 1000)
+            print("{}th sweep, {}th angle update: {}".format(i,j,current_value))
+    
+            
 
 def qaoa_customquil(edges, p):
     vertices = set([])
@@ -100,7 +187,7 @@ def run():
 
     print([total/shots for total in totals])
 
-def qaoa_maxcut(edges, angles):
+def qaoa_maxcut(edges, angles, shots=1000):
     """
     Returns the objective function of the maxcut problem.
     edges: Set of edges
@@ -110,8 +197,6 @@ def qaoa_maxcut(edges, angles):
     n = len(angles) // 2
     gammas = angles[:n]
     betas = angles[n:2*n]
-
-    shots = 1000
     qc = setup_forest_objects()
 
     program = qaoa_customquil(edges, n)
