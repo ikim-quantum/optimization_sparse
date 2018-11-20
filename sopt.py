@@ -60,7 +60,7 @@ def sparse_minimize(cost, x0, cutoff, samples, itt = None, args=None):
             mycost=cost(x0, args)
             history.append(mycost)
 
-            print("itt={}, which={}, cost={}".format(j, which, mycost), end='\r')
+            print("itt={}, which={}, cost={}, x0={}".format(j, which, mycost,x0), end='\r')
         
     return x0, cost(x0, args), history
 
