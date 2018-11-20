@@ -67,6 +67,7 @@ def sparse_reconstruct(angles, signals, magnify = 10, error=0, verb=False):
     # Find the minimum spacing.
     spacing = min_spacing(angles)
     itt = int(2 * np.pi / spacing)
+#    print("length={}".format(itt))
     # Make the discret Fourier transform matrix.
     idct_matrix = spfft.idct(np.identity(itt), norm='ortho', axis=0)
     # Make the angles integer-valued.
